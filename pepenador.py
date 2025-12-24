@@ -2,9 +2,10 @@
 # -*- coding: utf-8 -*-
 
 """
-WiFiDash - Network Diagnostic Dashboard (CLI)
+pepenador - analisis y metricas de red defencivas
 Defensivo, educativo, CCNA / ITIL
 Compatible con Linux y Termux
+no utiliza ninguna heramienta que precise de root
 """
 
 import socket
