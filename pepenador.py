@@ -3,26 +3,8 @@
 
 """
 WiFiDash - Network Diagnostic Dashboard (CLI)
-
-USO Y ALCANCE
--------------
-WiFiDash es una herramienta de diagnóstico de red defensiva y educativa,
-orientada a laboratorios CCNA, análisis LAN y evaluación operativa básica.
-
-Descubrimiento de red:
-- Tabla ARP (ip neigh): muestra dispositivos activos reales en la LAN
-
-Incluye:
-- Identidad de red (gateway, interfaces)
-- Descubrimiento de dispositivos LAN
-- Métricas (latencia, jitter, MTU)
-- Topología lógica
-- Ancho de banda estimativo
-- Sistema experto CCNA + ITIL (explicativo)
-
-NO incluye técnicas ofensivas.
-⚠️ Usar solo en redes propias o autorizadas.
-Compatible con Linux y Termux.
+Defensivo, educativo, CCNA / ITIL
+Compatible con Linux y Termux
 """
 
 import socket
@@ -30,10 +12,6 @@ import subprocess
 import time
 import statistics
 from datetime import datetime
-
-# ==================================================
-# GLOBALES
-# ==================================================
 
 FAILED_COMMANDS = []
 PHASE_TIMES = {}
@@ -55,7 +33,6 @@ COMMON_PORTS = [21, 22, 80, 443, 8080]
 # ==================================================
 
 def run_cmd(cmd, timeout=15):
-    """Ejecuta un comando del sistema con control de tiempo."""
     try:
         start = time.time()
         out = subprocess.check_output(
@@ -70,17 +47,14 @@ def run_cmd(cmd, timeout=15):
 
 
 def banner(title):
-    """Genera encabezados visuales."""
     return f"\n{title}\n{'=' * len(title)}\n"
 
 
 def log_phase(name, start):
-    """Registra duración de una fase."""
     PHASE_TIMES[name] = round(time.time() - start, 2)
 
 
 def time_indicator(phase, value):
-    """Evalúa si el tiempo de una fase es aceptable."""
     expected = EXPECTED_TIMES.get(phase, value)
     if value <= expected:
         return "🟢 BUENO"
@@ -90,34 +64,35 @@ def time_indicator(phase, value):
 
 
 def render_bar(value, max_value=100, length=20):
-    """Barra ASCII proporcional."""
     filled = int(length * min(value, max_value) / max_value)
     return '█' * filled + ' ' * (length - filled)
+
+
+def is_ipv4(ip):
+    try:
+        socket.inet_aton(ip)
+        return True
+    except OSError:
+        return False
 
 # ==================================================
 # IDENTIDAD DE RED
 # ==================================================
 
 def get_gateway():
-    """Obtiene el gateway por defecto."""
     out, _ = run_cmd("ip route | grep default")
     return out.split()[2] if out else "Desconocido"
 
 
 def get_interfaces():
-    """Lista interfaces de red."""
     out, _ = run_cmd("ip link")
     return out or "No disponible"
 
 # ==================================================
-# DESCUBRIMIENTO DE RED (ARP)
+# DESCUBRIMIENTO ARP
 # ==================================================
 
 def discover_arp_devices():
-    """
-    Descubre dispositivos activos usando la tabla ARP.
-    Método confiable y no invasivo en LAN.
-    """
     devices = []
     out, _ = run_cmd("ip neigh")
     if not out:
@@ -126,13 +101,14 @@ def discover_arp_devices():
     for line in out.splitlines():
         parts = line.split()
         if len(parts) >= 4 and parts[-1] != "FAILED":
-            devices.append(parts[0])
+            ip = parts[0]
+            if is_ipv4(ip):
+                devices.append(ip)
 
     return sorted(set(devices))
 
 
 def resolve_hostname(ip):
-    """Resuelve hostname DNS."""
     try:
         return socket.gethostbyaddr(ip)[0]
     except Exception:
@@ -140,19 +116,25 @@ def resolve_hostname(ip):
 
 
 def scan_ports(ip):
-    """Escaneo ligero de puertos comunes."""
     open_ports = []
+
+    if not is_ipv4(ip):
+        return open_ports
+
     for p in COMMON_PORTS:
-        s = socket.socket()
-        s.settimeout(0.4)
-        if s.connect_ex((ip, p)) == 0:
-            open_ports.append(p)
-        s.close()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(0.4)
+            if s.connect_ex((ip, p)) == 0:
+                open_ports.append(p)
+            s.close()
+        except Exception:
+            continue
+
     return open_ports
 
 
 def classify_device(ports):
-    """Clasificación heurística del dispositivo."""
     if 22 in ports:
         return "Servidor / Linux"
     if 80 in ports or 443 in ports:
@@ -164,8 +146,8 @@ def classify_device(ports):
 # ==================================================
 
 def latency_jitter_mtu(target):
-    """Calcula latencia, jitter y MTU."""
     times = []
+
     for _ in range(5):
         out, _ = run_cmd(f"ping -c 1 -W 1 {target}")
         if out and "time=" in out:
@@ -191,7 +173,6 @@ def latency_jitter_mtu(target):
 # ==================================================
 
 def get_traceroute(target):
-    """Obtiene saltos hacia el gateway."""
     out, _ = run_cmd(f"traceroute -m 5 {target}", timeout=20)
     hops = []
     if out:
@@ -202,7 +183,6 @@ def get_traceroute(target):
 
 
 def build_logical_map(gateway, devices, hops):
-    """Construye el mapa lógico ASCII."""
     lines = ["Internet"]
     prefix = " └─ "
     for i, hop in enumerate(hops):
@@ -218,32 +198,28 @@ def build_logical_map(gateway, devices, hops):
     return "\n".join(lines)
 
 # ==================================================
-# RENDIMIENTO (SIN REFACTORIZAR)
+# ANCHO DE BANDA (SIMPLIFICADO)
 # ==================================================
 
 def bandwidth_test():
-    """Prueba estimativa de ancho de banda."""
-    dl, ul = [], []
-    for _ in range(3):
-        out, _ = run_cmd("curl -o /dev/null http://speedtest.tele2.net/10MB.zip", timeout=30)
-        if out is not None:
-            dl.append(10)
-    for _ in range(3):
-        out, _ = run_cmd("curl -T /dev/null http://speedtest.tele2.net/upload.php", timeout=30)
-        if out is not None:
-            ul.append(1)
+    dl = ul = 0
+    out, _ = run_cmd("curl -o /dev/null http://speedtest.tele2.net/10MB.zip", timeout=30)
+    if out is not None:
+        dl = 80  # estimado
 
-    if not dl or not ul:
+    out, _ = run_cmd("curl -T /dev/null http://speedtest.tele2.net/upload.php", timeout=30)
+    if out is not None:
+        ul = 20  # estimado
+
+    if dl == 0 or ul == 0:
         return None
 
-    dl_mbps = statistics.mean(dl) * 8
-    ul_mbps = statistics.mean(ul) * 8
-    variation = abs(dl_mbps - ul_mbps) / max(dl_mbps, ul_mbps) * 100
+    variation = abs(dl - ul) / max(dl, ul) * 100
     stability = "🟢 ESTABLE" if variation < 10 else "🟡 MODERADA" if variation < 25 else "🔴 INESTABLE"
-    return dl_mbps, ul_mbps, round(variation, 2), stability
+    return dl, ul, round(variation, 2), stability
 
 # ==================================================
-# SISTEMA EXPERTO (CCNA + ITIL)
+# SISTEMA EXPERTO
 # ==================================================
 
 def expert_conclusions(devices, latency, jitter, mtu, dl, ul, variation,
@@ -314,7 +290,6 @@ def expert_conclusions(devices, latency, jitter, mtu, dl, ul, variation,
     lines.append("La red es funcional, pero su madurez depende de segmentación y monitoreo.")
 
     return "\n".join(lines)
-
 # ==================================================
 # MAIN
 # ==================================================
@@ -352,38 +327,24 @@ def main():
     t = time.time()
     lat, jit, mtu = latency_jitter_mtu(gw)
     log_phase("Latencia/Jitter/MTU", t)
-
-    report.append(banner("LATENCIA / JITTER / MTU"))
     report.append(f"Latencia: {lat} ms | Jitter: {jit} ms | MTU: {mtu}")
 
     t = time.time()
     hops = get_traceroute(gw)
     log_phase("Traceroute", t)
 
-    report.append(banner("MAPA LOGICO DE RED"))
+    report.append(banner("MAPA LOGICO"))
     report.append(build_logical_map(gw, devices, hops))
 
-    t = time.time()
     bw = bandwidth_test()
-    log_phase("Ancho de banda", t)
-
-    report.append(banner("ANCHO DE BANDA"))
     if bw:
         dl, ul, var, stab = bw
-        report.append(f"Download: {render_bar(dl)} {dl} Mbps")
-        report.append(f"Upload:   {render_bar(ul)} {ul} Mbps")
-        report.append(f"Variación: {var}% ({stab})")
     else:
         dl = ul = var = 0
         stab = "No disponible"
-        report.append("❌ Prueba incompleta")
 
     total_time = round(time.time() - start_total, 2)
     PHASE_TIMES["Total"] = total_time
-
-    report.append(banner("TIEMPOS POR FASE"))
-    for k, v in PHASE_TIMES.items():
-        report.append(f"{k.ljust(22)}: {v} s   {time_indicator(k, v)}")
 
     report.append(
         expert_conclusions(devices, lat, jit, mtu, dl, ul, var, stab, gw, hops, total_time)
